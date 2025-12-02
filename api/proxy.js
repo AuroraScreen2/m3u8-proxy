@@ -1,5 +1,5 @@
-// FILE: api/proxy.js
 export const config = { runtime: "edge" };
+
 export default async function handler(request) {
   const url = new URL(request.url);
   const workerOrigin = url.origin;
@@ -9,8 +9,8 @@ export default async function handler(request) {
       headers: {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, OPTIONS",
-        "Access-Control-Allow-Headers": "*"
-      }
+        "Access-Control-Allow-Headers": "*",
+      },
     });
   }
 
@@ -25,16 +25,18 @@ export default async function handler(request) {
   if (targetUrl.includes(" ")) targetUrl = targetUrl.replace(/ /g, "+");
 
   const customReferer = url.searchParams.get("referer") || "https://streameeeeee.site/";
+  const customOrigin = "https://streameeeeee.site";
+
   const proxyHeaders = new Headers({
     "User-Agent":
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
-    "Referer": customReferer,
-    "Origin": "https://streameeeeee.site",
-    "Accept": "*/*",
-    "Connection": "keep-alive",
+    Referer: customReferer,
+    Origin: customOrigin,
+    Accept: "*/*",
+    Connection: "keep-alive",
     "Sec-Fetch-Dest": "empty",
     "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "cross-site"
+    "Sec-Fetch-Site": "cross-site",
   });
 
   try {
@@ -58,14 +60,15 @@ export default async function handler(request) {
       const baseUrl = targetUrl;
       let text = await resp.text();
 
-      // segments
+      // rewrite segments
       text = text.replace(/^(?!#)(.*)$/gm, (line) => {
         const seg = line.trim();
         if (!seg) return line;
         const abs = new URL(seg, baseUrl).href;
         return `${workerOrigin}/api/proxy?url=${encodeURIComponent(abs)}&referer=${encodeURIComponent(customReferer)}`;
       });
-      // keys
+
+      // rewrite key URIs
       text = text.replace(/URI=(["']?)([^"',\s]+)(["']?)/g, (_m, q1, uri, q3) => {
         const abs = new URL(uri, baseUrl).href;
         return `URI=${q1}${workerOrigin}/api/proxy?url=${encodeURIComponent(abs)}&referer=${encodeURIComponent(
@@ -77,6 +80,7 @@ export default async function handler(request) {
     }
 
     if (targetUrl.includes(".ts") || ct.includes("video/MP2T")) out.set("Content-Type", "video/MP2T");
+
     return new Response(resp.body, { status: resp.status, headers: out });
   } catch (e) {
     return new Response(`Vercel Error: ${e?.message ?? "Unknown error"}`, { status: 500 });
