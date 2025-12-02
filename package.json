@@ -24,5 +24,6 @@
   },
   "overrides": {
     "eslint": "8.57.0"
-  }
+  },
+  "packageManager": "npm@10"
 }
