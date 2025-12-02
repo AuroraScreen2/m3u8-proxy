@@ -1,23 +1,18 @@
 import os
 from flask import Flask, request, Response, stream_with_context, render_template_string
-import requests
+from curl_cffi import requests # <--- THE MAGIC LIBRARY
 from urllib.parse import urljoin, quote
-import urllib3
 import re
-
-# Suppress SSL warnings
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
 # MASTER KEY HEADERS
 DEFAULT_REFERER = "https://streameeeeee.site/"
 DEFAULT_ORIGIN = "https://streameeeeee.site"
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
 
 @app.route('/')
 def index():
-    # Detect Hugging Face URL or localhost
     host_url = request.host_url
     if host_url.endswith('/'): host_url = host_url[:-1]
 
@@ -25,7 +20,7 @@ def index():
         <html>
         <body style="font-family:sans-serif; padding:40px; background:#0b0f19; color:white;">
             <div style="background:#1b2234; padding:30px; border-radius:8px; max-width:800px; margin:0 auto; border:1px solid #2b354f;">
-                <h2 style="color:#FFD700;">Aurora Proxy (Hugging Face Edition)</h2>
+                <h2 style="color:#FFD700;">Aurora Proxy (Chrome Impersonator)</h2>
                 <input type="text" id="targetUrl" placeholder="Paste m3u8 link here" style="width:100%; padding:12px; background:#0b0f19; color:white; border:1px solid #555;">
                 <br><br>
                 <button onclick="generate()" style="padding:12px 24px; background:#FFD700; color:black; font-weight:bold; border:none; cursor:pointer;">GENERATE LINK</button>
@@ -56,51 +51,54 @@ def proxy():
     if ' ' in target_url: target_url = target_url.replace(' ', '+')
     current_referer = request.args.get('referer', DEFAULT_REFERER)
 
+    # We don't need to manually set User-Agent in headers because 'impersonate' does it
     headers = {
-        "User-Agent": USER_AGENT,
         "Referer": current_referer,
         "Origin": DEFAULT_ORIGIN,
-        "Accept": "*/*",
-        "Connection": "keep-alive"
+        "Accept": "*/*"
     }
 
     try:
-        resp = requests.get(target_url, headers=headers, stream=True, verify=False, timeout=20)
+        # MAGIC LINE: impersonate="chrome110" makes the handshake look like Chrome
+        resp = requests.get(target_url, headers=headers, stream=True, impersonate="chrome110", timeout=20)
         
-        # STOP IF BLOCKED: If we get HTML instead of video, stop.
+        # Security Check: If we got HTML (like a Cloudflare Block page), abort.
         content_type = resp.headers.get('Content-Type', '')
-        if 'text/html' in content_type:
-            return f"Error: Upstream Server Blocked This IP. (Received HTML instead of Video)", 403
+        if 'text/html' in content_type and not target_url.endswith('.m3u8'):
+             return f"Error: Still Blocked. Server sent HTML: {resp.status_code}", 403
 
+        # Prepare headers for response
         excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
         headers_to_send = [(n, v) for n, v in resp.headers.items() if n.lower() not in excluded_headers]
         headers_to_send.append(('Access-Control-Allow-Origin', '*'))
 
+        # M3U8 Rewrite Logic
         if target_url.endswith('.m3u8') or 'mpegurl' in content_type:
             content = resp.text
             base_url = target_url
-            # Fix for Hugging Face HTTPS handling
             own_url = request.host_url
             if not own_url.startswith('https'): own_url = own_url.replace('http', 'https')
             if own_url.endswith('/'): own_url = own_url[:-1]
 
             def make_proxy_url(match):
                 original = match.group(1)
-                quote_char = ""
-                if original.startswith('"') and original.endswith('"'):
-                    quote_char = '"'
-                    original = original[1:-1]
                 absolute_url = urljoin(base_url, original)
                 encoded_url = quote(absolute_url)
                 encoded_referer = quote(current_referer)
-                return f'{quote_char}{own_url}/proxy?url={encoded_url}&referer={encoded_referer}{quote_char}'
+                return f'{own_url}/proxy?url={encoded_url}&referer={encoded_referer}'
 
             new_content = re.sub(r'^(?!#)(.*)$', make_proxy_url, content, flags=re.MULTILINE)
+            # Rewrite keys
             new_content = re.sub(r'URI=(["\']?)([^",\s]+)(["\']?)', lambda m: f'URI={m.group(1)}{own_url}/proxy?url={quote(urljoin(base_url, m.group(2)))}&referer={quote(current_referer)}{m.group(3)}', new_content)
 
             return Response(new_content, status=resp.status_code, headers=headers_to_send)
 
-        return Response(stream_with_context(resp.iter_content(chunk_size=8192)), status=resp.status_code, content_type=content_type, direct_passthrough=True, headers=headers_to_send)
+        # Binary Stream
+        return Response(stream_with_context(resp.iter_content(chunk_size=8192)), 
+                        status=resp.status_code, 
+                        content_type=content_type, 
+                        direct_passthrough=True, 
+                        headers=headers_to_send)
 
     except Exception as e:
         return f"Proxy Error: {e}", 500
