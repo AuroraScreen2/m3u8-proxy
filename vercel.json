@@ -1,6 +1,6 @@
+// vercel.json
 {
-  "version": 2,
   "functions": {
-    "api/proxy.js": { "runtime": "edge" }
+    "api/proxy.py": { "runtime": "python3.11" }
   }
 }
