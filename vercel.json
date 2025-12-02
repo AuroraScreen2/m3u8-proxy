@@ -1,6 +1,6 @@
 {
   "functions": {
-    "app/api/proxy/route.ts": {
+    "api/proxy.js": {
       "runtime": "edge"
     }
   }
