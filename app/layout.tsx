@@ -1,4 +1,3 @@
-// app/layout.tsx
 export const metadata = {
   title: "Aurora Vercel Proxy",
   description: "Edge HLS proxy demo"
