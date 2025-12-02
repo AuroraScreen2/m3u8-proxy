@@ -1,92 +1,120 @@
-# api/proxy.py
-# Serverless Python using FastAPI + httpx
-from fastapi import FastAPI, Request, Response
-from fastapi.responses import HTMLResponse, PlainTextResponse
-import httpx
-from urllib.parse import urljoin, quote
+export const config = {
+  runtime: 'edge', // This is critical for streaming video
+};
 
-app = FastAPI()
+export default async function handler(request) {
+  const url = new URL(request.url);
+  const workerOrigin = url.origin;
 
-@app.api_route("/api/proxy", methods=["GET", "OPTIONS"])
-async def proxy(req: Request):
-    # CORS preflight
-    if req.method == "OPTIONS":
-        return Response(status_code=204, headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, OPTIONS",
-            "Access-Control-Allow-Headers": "*",
-        })
+  // --- 1. HANDLE CORS PRE-FLIGHT ---
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+      },
+    });
+  }
 
-    params = dict(req.query_params)
-    target_url = params.get("url")
-    origin = f"{req.url.scheme}://{req.url.netloc}"
+  // --- 2. LINK GENERATOR (UI) ---
+  let targetUrl = url.searchParams.get("url");
+  if (!targetUrl) {
+    return new Response(renderGenerator(workerOrigin), {
+      headers: { "Content-Type": "text/html" },
+    });
+  }
 
-    if not target_url:
-        html = "<h1>Aurora Vercel Proxy (Python)</h1><p>Append <code>/api/proxy?url=...</code></p>"
-        return HTMLResponse(content=html)
+  // --- 3. AUTO-FIX SPACES ---
+  if (targetUrl.includes(" ")) {
+    targetUrl = targetUrl.replace(/ /g, "+");
+  }
 
-    if " " in target_url:
-        target_url = target_url.replace(" ", "+")
+  // --- 4. MASTER KEY HEADERS ---
+  const customReferer = url.searchParams.get("referer") || "https://streameeeeee.site/";
+  const customOrigin = "https://streameeeeee.site";
 
-    custom_referer = params.get("referer", "https://streameeeeee.site/")
+  const proxyHeaders = new Headers();
+  proxyHeaders.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36");
+  proxyHeaders.set("Referer", customReferer);
+  proxyHeaders.set("Origin", customOrigin);
+  proxyHeaders.set("Accept", "*/*");
+  proxyHeaders.set("Connection", "keep-alive");
+  
+  // Anti-Bot Headers
+  proxyHeaders.set("Sec-Fetch-Dest", "empty");
+  proxyHeaders.set("Sec-Fetch-Mode", "cors");
+  proxyHeaders.set("Sec-Fetch-Site", "cross-site");
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
-        "Referer": custom_referer,
-        "Origin": "https://streameeeeee.site",
-        "Accept": "*/*",
-        "Connection": "keep-alive",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "cross-site",
+  try {
+    // --- 5. FETCH ---
+    const response = await fetch(targetUrl, {
+      method: "GET",
+      headers: proxyHeaders,
+      redirect: "follow",
+    });
+
+    // CHECK FOR 403
+    if (response.status === 403) {
+        // If this happens, Vercel IPs are also blocked
+        return new Response("Vercel IP Blocked (403)", { status: 403 });
     }
 
-    try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-            upstream = await client.get(target_url, headers=headers)
+    // --- 6. HEADER STRIPPING ---
+    const responseHeaders = new Headers(response.headers);
+    responseHeaders.delete("Content-Length");
+    responseHeaders.delete("Content-Encoding");
+    responseHeaders.delete("Transfer-Encoding");
+    responseHeaders.set("Access-Control-Allow-Origin", "*");
 
-        if upstream.status_code == 403:
-            return PlainTextResponse("Vercel IP Blocked (403)", status_code=403, headers={"Access-Control-Allow-Origin": "*"})
+    const contentType = responseHeaders.get("Content-Type") || "";
 
-        # Copy headers (strip hop-by-hop)
-        out_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in ["content-length", "content-encoding", "transfer-encoding"]}
-        out_headers["Access-Control-Allow-Origin"] = "*"
-        content_type = upstream.headers.get("Content-Type", "")
+    // --- 7. M3U8 REWRITE LOGIC ---
+    if (
+      contentType.includes("application/vnd.apple.mpegurl") ||
+      contentType.includes("application/x-mpegURL") ||
+      targetUrl.endsWith(".m3u8")
+    ) {
+      responseHeaders.set("Content-Type", "application/vnd.apple.mpegurl");
+      let text = await response.text();
+      const baseUrl = targetUrl;
 
-        is_hls = ("application/vnd.apple.mpegurl" in content_type) or ("application/x-mpegURL" in content_type) or target_url.endswith(".m3u8")
+      // Rewrite Segments
+      text = text.replace(/^(?!#)(.*)$/gm, (match) => {
+        const originalSegment = match.trim();
+        if (!originalSegment) return match;
+        const absoluteUrl = new URL(originalSegment, baseUrl).href;
+        const encodedUrl = encodeURIComponent(absoluteUrl);
+        const encodedReferer = encodeURIComponent(customReferer);
+        return `${workerOrigin}/api/proxy?url=${encodedUrl}&referer=${encodedReferer}`;
+      });
 
-        if is_hls:
-            out_headers["Content-Type"] = "application/vnd.apple.mpegurl"
-            text = upstream.text
-            base = target_url
+      // Rewrite Keys
+      text = text.replace(/URI=(["']?)([^"',\s]+)(["']?)/g, (match, q1, uri, q3) => {
+          const absoluteKey = new URL(uri, baseUrl).href;
+          const encodedKey = encodeURIComponent(absoluteKey);
+          const encodedRef = encodeURIComponent(customReferer);
+          return `URI=${q1}${workerOrigin}/api/proxy?url=${encodedKey}&referer=${encodedRef}${q3}`;
+      });
 
-            # rewrite segments
-            def repl_line(match: str):
-                line = match.group(0)
-                if line.startswith("#"):  # do not rewrite comments
-                    return line
-                seg = line.strip()
-                if not seg:
-                    return line
-                absolute = urljoin(base, seg)
-                return f"{origin}/api/proxy?url={quote(absolute, safe='')}&referer={quote(custom_referer, safe='')}"
+      return new Response(text, { status: 200, headers: responseHeaders });
+    }
 
-            import re
-            text = re.sub(r"^(.*)$", repl_line, text, flags=re.M)
+    // --- 8. BINARY PASSTHROUGH ---
+    if (targetUrl.includes(".ts") || contentType.includes("video/MP2T")) {
+        responseHeaders.set("Content-Type", "video/MP2T");
+    }
 
-            # rewrite key URIs
-            def repl_key(m):
-                q1, uri, q3 = m.group(1), m.group(2), m.group(3)
-                absolute = urljoin(base, uri)
-                return f'URI={q1}{origin}/api/proxy?url={quote(absolute, safe="")}&referer={quote(custom_referer, safe="")}{q3}'
-            text = re.sub(r'URI=(["\']?)([^"\',\s]+)(["\']?)', repl_key, text)
+    return new Response(response.body, {
+      status: response.status,
+      headers: responseHeaders,
+    });
 
-            return Response(content=text, media_type="application/vnd.apple.mpegurl", headers=out_headers)
+  } catch (err) {
+    return new Response(`Vercel Error: ${err.message}`, { status: 500 });
+  }
+}
 
-        # binary tweaks
-        if (".ts" in target_url) or ("video/MP2T" in content_type):
-            out_headers["Content-Type"] = "video/MP2T"
-
-        return Response(content=upstream.content, status_code=upstream.status_code, headers=out_headers)
-    except Exception as e:
-        return PlainTextResponse(f"Vercel Error: {str(e)}", status_code=500, headers={"Access-Control-Allow-Origin": "*"})
+function renderGenerator(origin) {
+    return `<h1>Aurora Vercel Proxy</h1><p>Append <code>/api/proxy?url=...</code> to use.</p>`;
+}
