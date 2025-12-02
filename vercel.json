@@ -1,5 +1,3 @@
-// ✅ EDGE (JavaScript) — Recommended for HLS
-// FILE: vercel.json
 {
   "functions": {
     "api/proxy.js": { "runtime": "edge" }
