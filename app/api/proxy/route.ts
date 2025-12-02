@@ -1,4 +1,3 @@
-// app/api/proxy/route.ts
 export const runtime = "edge";
 
 function helper(origin: string) {
@@ -63,15 +62,8 @@ export async function GET(request: Request) {
   upstreamHeaders.set("Sec-Fetch-Site", "cross-site");
 
   try {
-    const res = await fetch(targetUrl, {
-      method: "GET",
-      headers: upstreamHeaders,
-      redirect: "follow"
-    });
-
-    if (res.status === 403) {
-      return new Response("Vercel IP Blocked (403)", { status: 403 });
-    }
+    const res = await fetch(targetUrl, { method: "GET", headers: upstreamHeaders, redirect: "follow" });
+    if (res.status === 403) return new Response("Vercel IP Blocked (403)", { status: 403 });
 
     const outHeaders = sanitizeHeaders(res.headers);
     const contentType = outHeaders.get("Content-Type") || "";
@@ -81,7 +73,7 @@ export async function GET(request: Request) {
       const baseUrl = targetUrl;
       let text = await res.text();
 
-      // rewrite segment lines (non-comment)
+      // rewrite segment lines
       text = text.replace(/^(?!#)(.*)$/gm, (line) => {
         const seg = line.trim();
         if (!seg) return line;
@@ -103,7 +95,7 @@ export async function GET(request: Request) {
     }
 
     if (targetUrl.includes(".ts") || contentType.includes("video/MP2T")) {
-      outHeaders.set("Content-Type", "video/MP2T"); // why: some origins mislabel
+      outHeaders.set("Content-Type", "video/MP2T");
     }
 
     return new Response(res.body, { status: res.status, headers: outHeaders });
