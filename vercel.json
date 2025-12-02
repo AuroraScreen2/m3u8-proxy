@@ -1,4 +1,3 @@
-// vercel.json
 {
   "functions": {
     "api/proxy.py": { "runtime": "python3.11" }
