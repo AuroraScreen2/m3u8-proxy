@@ -3,6 +3,7 @@ import requests
 from urllib.parse import urljoin, quote
 import urllib3
 import re
+import os  # <--- REQUIRED FOR RENDER
 
 # Suppress SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -10,14 +11,17 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 app = Flask(__name__)
 
 # --- CONFIGURATION ---
-PORT = 5000
+# Render provides the port in the environment variables. 
+# If running locally, it defaults to 5000.
+PORT = int(os.environ.get("PORT", 5000))
+
 DEFAULT_REFERER = "https://streameeeeee.site/"
 DEFAULT_ORIGIN = "https://streameeeeee.site"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 @app.route('/proxy', methods=['GET', 'OPTIONS'])
 def proxy():
-    # 1. Handle CORS (Allow all origins)
+    # 1. Handle CORS
     if request.method == 'OPTIONS':
         return Response("", headers={
             'Access-Control-Allow-Origin': '*',
@@ -27,16 +31,14 @@ def proxy():
 
     target_url = request.args.get('url')
     if not target_url: 
-        return "Error: No URL provided. Usage: /proxy?url=YOUR_LINK", 400
+        return "Error: No URL provided.", 400
 
-    # Auto-Repair Spaces in URL
     if ' ' in target_url: target_url = target_url.replace(' ', '+')
 
-    # Get Referer from query args or default
     current_referer = request.args.get('referer', DEFAULT_REFERER)
     
-    # Dynamic Host Detection (Automatically detects localhost, IP, or Domain)
-    proxy_root = request.url_root  # e.g., "http://localhost:5000/"
+    # Dynamic Host Detection
+    proxy_root = request.url_root
 
     headers = {
         "User-Agent": USER_AGENT,
@@ -47,10 +49,8 @@ def proxy():
     }
 
     try:
-        # Request with stream=True
         resp = requests.get(target_url, headers=headers, stream=True, verify=False, timeout=15)
         
-        # 2. SANITIZE HEADERS
         excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'host']
         headers_to_send = [
             (name, value) for (name, value) in resp.headers.items()
@@ -60,7 +60,7 @@ def proxy():
 
         content_type = resp.headers.get('Content-Type', '').lower()
 
-        # 3. M3U8 REWRITE LOGIC
+        # M3U8 REWRITE LOGIC
         if target_url.endswith('.m3u8') or 'mpegurl' in content_type or 'application/x-mpegurl' in content_type:
             content = resp.text
             base_url = target_url
@@ -78,20 +78,17 @@ def proxy():
                 encoded_url = quote(absolute_url)
                 encoded_referer = quote(current_referer)
                 
-                # Rewrites lines to point back to THIS proxy
                 return f'{quote_char}{proxy_root}proxy?url={encoded_url}&referer={encoded_referer}{quote_char}'
 
-            # Rewrite Segments
             new_content = re.sub(r'^(?!#)(\S+)$', make_proxy_url, content, flags=re.MULTILINE)
             
-            # Rewrite Encryption Keys
             new_content = re.sub(r'URI=(["\']?)([^",\s]+)(["\']?)', 
                                  lambda m: f'URI={m.group(1)}{proxy_root}proxy?url={quote(urljoin(base_url, m.group(2)))}&referer={quote(current_referer)}{m.group(3)}', 
                                  new_content)
 
             return Response(new_content, status=resp.status_code, headers=headers_to_send)
 
-        # 4. BINARY STREAM (TS Files)
+        # BINARY STREAM
         return Response(stream_with_context(resp.iter_content(chunk_size=65536)), 
                         status=resp.status_code, 
                         content_type=content_type,
@@ -103,5 +100,6 @@ def proxy():
         return f"Proxy Error: {e}", 500
 
 if __name__ == '__main__':
-    print(f"🚀 Headless Proxy running on port {PORT}")
-    app.run(host='0.0.0.0', port=PORT, threaded=True)
+    # This block is only run when testing locally.
+    # On Render, Gunicorn will handle the execution.
+    app.run(host='0.0.0.0', port=PORT)
