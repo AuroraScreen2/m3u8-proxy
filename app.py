@@ -1,23 +1,18 @@
 from flask import Flask, request, Response, stream_with_context
-import requests
+from curl_cffi import requests as crequests # <--- The Magic Library
 from urllib.parse import urljoin, quote
-import urllib3
 import re
-import os  # <--- REQUIRED FOR RENDER
-
-# Suppress SSL warnings
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+import os
 
 app = Flask(__name__)
 
 # --- CONFIGURATION ---
-# Render provides the port in the environment variables. 
-# If running locally, it defaults to 5000.
 PORT = int(os.environ.get("PORT", 5000))
-
 DEFAULT_REFERER = "https://streameeeeee.site/"
 DEFAULT_ORIGIN = "https://streameeeeee.site"
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+# We don't need a fake User-Agent string anymore. 
+# curl_cffi handles that internally by impersonating Chrome.
 
 @app.route('/proxy', methods=['GET', 'OPTIONS'])
 def proxy():
@@ -30,27 +25,35 @@ def proxy():
         })
 
     target_url = request.args.get('url')
-    if not target_url: 
-        return "Error: No URL provided.", 400
+    if not target_url: return "Error: No URL provided.", 400
 
     if ' ' in target_url: target_url = target_url.replace(' ', '+')
-
     current_referer = request.args.get('referer', DEFAULT_REFERER)
-    
-    # Dynamic Host Detection
     proxy_root = request.url_root
 
     headers = {
-        "User-Agent": USER_AGENT,
         "Referer": current_referer,
         "Origin": DEFAULT_ORIGIN,
-        "Accept": "*/*",
-        "Connection": "keep-alive"
     }
 
     try:
-        resp = requests.get(target_url, headers=headers, stream=True, verify=False, timeout=15)
-        
+        # --- THE FIX: IMPERSONATE CHROME ---
+        # "impersonate='chrome124'" makes Cloudflare think this is a real browser
+        resp = crequests.get(
+            target_url, 
+            headers=headers, 
+            impersonate="chrome124", 
+            stream=True, 
+            timeout=15
+        )
+
+        # 2. ERROR CHECKING (Prevent the "Messy Text")
+        # If Cloudflare blocks us, resp.status_code will likely be 403 or 503.
+        # We should forward that error instead of trying to rewrite it.
+        if resp.status_code in [403, 503, 429]:
+            return Response(f"Cloudflare Blocked Request. Status: {resp.status_code}", status=resp.status_code)
+
+        # 3. SANITIZE HEADERS
         excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'host']
         headers_to_send = [
             (name, value) for (name, value) in resp.headers.items()
@@ -60,14 +63,20 @@ def proxy():
 
         content_type = resp.headers.get('Content-Type', '').lower()
 
-        # M3U8 REWRITE LOGIC
-        if target_url.endswith('.m3u8') or 'mpegurl' in content_type or 'application/x-mpegurl' in content_type:
+        # 4. M3U8 REWRITE LOGIC
+        # Added a check to ensure we aren't rewriting HTML error pages
+        is_m3u8 = target_url.endswith('.m3u8') or 'mpegurl' in content_type or 'application/x-mpegurl' in content_type
+        
+        if is_m3u8 and '<html' not in resp.text[:100].lower():
             content = resp.text
             base_url = target_url
             
             def make_proxy_url(match):
                 original = match.group(1).strip()
-                if not original: return match.group(0)
+                if not original or original.startswith('#'): return match.group(0)
+
+                # Stop regex from grabbing HTML tags if they sneak in
+                if original.startswith('<'): return match.group(0)
 
                 quote_char = ""
                 if original.startswith('"') and original.endswith('"'):
@@ -80,15 +89,17 @@ def proxy():
                 
                 return f'{quote_char}{proxy_root}proxy?url={encoded_url}&referer={encoded_referer}{quote_char}'
 
+            # Rewrites Segments
             new_content = re.sub(r'^(?!#)(\S+)$', make_proxy_url, content, flags=re.MULTILINE)
             
+            # Rewrites Keys
             new_content = re.sub(r'URI=(["\']?)([^",\s]+)(["\']?)', 
                                  lambda m: f'URI={m.group(1)}{proxy_root}proxy?url={quote(urljoin(base_url, m.group(2)))}&referer={quote(current_referer)}{m.group(3)}', 
                                  new_content)
 
             return Response(new_content, status=resp.status_code, headers=headers_to_send)
 
-        # BINARY STREAM
+        # 5. BINARY STREAM
         return Response(stream_with_context(resp.iter_content(chunk_size=65536)), 
                         status=resp.status_code, 
                         content_type=content_type,
@@ -100,6 +111,4 @@ def proxy():
         return f"Proxy Error: {e}", 500
 
 if __name__ == '__main__':
-    # This block is only run when testing locally.
-    # On Render, Gunicorn will handle the execution.
     app.run(host='0.0.0.0', port=PORT)
