@@ -7,21 +7,20 @@ app = FastAPI()
 
 def scrape_logic():
     results = []
-    debug_info = {"title": "Unknown", "url": "Unknown"}
+    debug_info = {"title": "Unknown", "url": "Unknown", "status": "Starting"}
     
     with sync_playwright() as p:
-        # User Agent & Headers (Matches your curl)
+        # 1. Use your exact User Agent
         my_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
         
-        # Launch with extra stealth arguments for Linux
+        # 2. Launch Browser (Headless)
         browser = p.chromium.launch(
             headless=True,
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-setuid-sandbox"
+                "--disable-gpu"
             ]
         )
 
@@ -41,6 +40,14 @@ def scrape_logic():
             }
         )
 
+        # 3. CRITICAL: Manually delete the 'webdriver' property
+        # This is the "Mask" that worked on your local PC.
+        context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+        """)
+
         page = context.new_page()
         
         # Listener
@@ -48,7 +55,9 @@ def scrape_logic():
             if "/hezushon/ge/" in response.url:
                 try:
                     data = response.json()
-                    results.append(data)
+                    # Only add if we haven't seen this exact one before
+                    if data not in results:
+                        results.append(data)
                 except:
                     pass
 
@@ -56,24 +65,34 @@ def scrape_logic():
         
         try:
             print("Navigating...")
-            # Increased timeout to 60s for slow servers
-            page.goto("https://vidfast.pro/movie/533535", wait_until="domcontentloaded", timeout=60000)
+            # Go to the page
+            page.goto("https://vidfast.pro/movie/533535", timeout=60000, wait_until="domcontentloaded")
             
-            # Wait up to 45 seconds
-            for i in range(45):
+            # 4. EXPLICITLY WAIT FOR THE LOADER TO GO AWAY
+            # We wait up to 10 seconds for the text "FETCHING" to disappear.
+            try:
+                debug_info["status"] = "Waiting for loader to vanish..."
+                # This regex matches "FETCHING" case-insensitive
+                page.wait_for_selector("text=/FETCHING/i", state="detached", timeout=15000)
+                debug_info["status"] = "Loader finished."
+            except:
+                debug_info["status"] = "Loader stuck (timed out)."
+
+            # Now wait for data
+            for i in range(30):
                 if len(results) >= 2:
                     break
                 page.wait_for_timeout(1000)
             
-            # Capture debug info if we failed
+            # Collect Debug Info
             if not results:
                 debug_info["title"] = page.title()
                 debug_info["url"] = page.url
-                # Get first 200 chars of body text to check for "Access Denied"
                 try:
-                    debug_info["content_snippet"] = page.inner_text("body")[:200]
+                    # Get the main text of the body to see what we are stuck on
+                    debug_info["content_snippet"] = page.inner_text("body")[:300]
                 except:
-                    debug_info["content_snippet"] = "Could not read body"
+                    debug_info["content_snippet"] = "Body empty"
 
         except Exception as e:
             debug_info["error"] = str(e)
@@ -90,7 +109,6 @@ def run_scraper():
     if data:
         return {"status": "success", "count": len(data), "data": data}
     
-    # This will tell us WHY it failed
     return {
         "status": "failed", 
         "message": "No data found", 
