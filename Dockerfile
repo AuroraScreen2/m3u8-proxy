@@ -1,5 +1,5 @@
 # Get the official image that already includes Python + Browsers
-FROM mcr.microsoft.com/playwright/python:v1.41.0-jammy
+FROM mcr.microsoft.com/playwright/python:v1.57.0-jammy
 
 # Set working directory
 WORKDIR /app
