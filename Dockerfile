@@ -1,11 +1,18 @@
-FROM python:3.9
+# Get the official image that already includes Python + Browsers
+FROM mcr.microsoft.com/playwright/python:v1.41.0-jammy
 
-WORKDIR /code
+# Set working directory
+WORKDIR /app
 
-COPY ./requirements.txt /code/requirements.txt
-RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
+# Copy files
+COPY requirements.txt .
+COPY main.py .
 
-COPY . .
+# Install python libraries
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Run on port 7860 (Standard for Hugging Face)
-CMD ["gunicorn", "-b", "0.0.0.0:7860", "app:app"]
+# Open port 8080
+EXPOSE 8080
+
+# Run the app
+CMD ["python", "main.py"]
