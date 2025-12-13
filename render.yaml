@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: vidfast-scraper
+    env: docker  # <--- THIS LINE FORCES DOCKER
+    plan: free
+    branch: main # or master
