@@ -1,18 +1,18 @@
-# Get the official image that already includes Python + Browsers
-FROM mcr.microsoft.com/playwright/python:v1.57.0-jammy
+# Get the official Playwright image (Includes Python + Browsers)
+FROM mcr.microsoft.com/playwright/python:v1.40.0-jammy
 
-# Set working directory
 WORKDIR /app
 
-# Copy files
+# Copy requirements and install python packages
 COPY requirements.txt .
-COPY main.py .
-
-# Install python libraries
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Open port 8080
-EXPOSE 8080
+# Install the browsers
+RUN playwright install chromium
+RUN playwright install-deps
 
-# Run the app
-CMD ["python", "main.py"]
+# Copy your code AND the extension folder
+COPY . .
+
+# Command to run the app
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000"]
