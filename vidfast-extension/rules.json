@@ -1,0 +1,18 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "removeHeaders",
+      "responseHeaders": [
+        {"header": "x-frame-options"},
+        {"header": "content-security-policy"},
+        {"header": "frame-options"}
+      ]
+    },
+    "condition": {
+      "urlFilter": "vidfast.pro",
+      "resourceTypes": ["sub_frame"]
+    }
+  }
+]

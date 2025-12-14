@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>My Movie Site</title>
+</head>
+<body>
+
+    <h1>Watching: Deadpool</h1>
+    <button id="play-btn" onclick="fetchVideo()">Play Movie</button>
+    <p id="status"></p>
+
+    <video id="player" controls width="600" height="400" style="display:none;"></video>
+
+    <iframe id="worker-frame" 
+            style="width:0; height:0; border:0; visibility:hidden; position:absolute;">
+    </iframe>
+
+    <script>
+        // 1. Listen for the Extension's reply
+        window.addEventListener("message", function(event) {
+            // Note: In real production, check event.origin for security!
+            if (event.data.action === "STREAM_FOUND") {
+                console.log("Got URL:", event.data.url);
+                
+                document.getElementById("status").innerText = "Stream Found! Playing...";
+                document.getElementById("worker-frame").src = "about:blank"; // Stop the iframe
+                
+                // Load into player
+                const player = document.getElementById("player");
+                player.style.display = "block";
+                player.src = event.data.url;
+                player.play();
+            }
+        });
+
+        // 2. Trigger the Fetch
+        function fetchVideo() {
+            document.getElementById("status").innerText = "Decrypting Stream...";
+            const frame = document.getElementById("worker-frame");
+            // Load VidFast into the invisible frame
+            frame.src = "https://vidfast.pro/movie/533535";
+        }
+    </script>
+
+</body>
+</html>
