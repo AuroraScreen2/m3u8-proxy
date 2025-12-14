@@ -68,7 +68,7 @@ def scrape_logic():
         
         try:
             print("Navigating...")
-            page.goto("https://vidfast.pro/movie/533535", timeout=60000, wait_until="domcontentloaded")
+            page.goto("https://vidfast.pro/movie/155?autoplay=true", timeout=60000, wait_until="domcontentloaded")
             
             # --- 3. FORCE FOCUS ---
             # Tell the browser "Click here, look here!"
