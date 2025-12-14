@@ -14,15 +14,22 @@ def run_scraper_with_extension(video_url):
     with sync_playwright() as p:
         # We must use persistent_context to load extensions
         # We assume user_data_dir is inside /tmp to avoid permission errors on Render
-        context = p.chromium.launch_persistent_context(
+       context = p.chromium.launch_persistent_context(
             user_data_dir="/tmp/chrome_user_data", 
-            headless=True, # Note: Some extensions struggle in Headless, but we try 'new' mode via args
+            
+            # 1. Keep this False so Playwright doesn't use the "Old" headless mode
+            headless=False, 
+            
             args=[
                 f"--disable-extensions-except={EXTENSION_PATH}",
                 f"--load-extension={EXTENSION_PATH}",
-                "--headless=new", # Modern Headless mode (supports extensions better)
+                
+                # 2. Add this line. This forces the "New" headless mode that supports extensions.
+                "--headless=new", 
+                
                 "--no-sandbox",
-                "--disable-dev-shm-usage"
+                "--disable-dev-shm-usage",
+                "--disable-gpu"
             ],
             viewport={"width": 1920, "height": 1080}
         )
