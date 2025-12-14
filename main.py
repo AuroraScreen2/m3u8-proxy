@@ -2,7 +2,6 @@ from fastapi import FastAPI
 from playwright.sync_api import sync_playwright
 import uvicorn
 import random
-import time
 
 app = FastAPI()
 
@@ -11,8 +10,7 @@ def scrape_logic():
     debug_info = {"status": "Starting"}
     
     with sync_playwright() as p:
-        # --- 1. USE LINUX USER AGENT (Matches Render's OS) ---
-        # "X11; Linux x86_64" tells the truth about the server OS
+        # 1. Use Honest Linux User Agent
         linux_user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         
         browser = p.chromium.launch(
@@ -21,20 +19,19 @@ def scrape_logic():
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
-                "--disable-gpu"
+                "--disable-gpu", 
             ]
         )
 
         context = browser.new_context(
-            user_agent=linux_user_agent, # <--- Updated to Linux
+            user_agent=linux_user_agent,
             viewport={"width": 1920, "height": 1080},
             locale="en-US",
             extra_http_headers={
                 "accept-language": "en-US,en;q=0.9",
-                # --- 2. UPDATE HEADERS TO LINUX ---
                 "sec-ch-ua": '"Chromium";v="120", "Google Chrome";v="120", "Not-A.Brand";v="99"',
                 "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"Linux"', # <--- Vital: Matches the OS
+                "sec-ch-ua-platform": '"Linux"',
                 "sec-fetch-dest": "document",
                 "sec-fetch-mode": "navigate",
                 "sec-fetch-site": "same-origin",
@@ -43,8 +40,29 @@ def scrape_logic():
             }
         )
 
-        # Stealth: Remove Robot Flag
+        # --- THE GPU LIE (WebGL Spoofing) ---
+        # We overwrite the browser function that reports the GPU model.
+        # Instead of "SwiftShader" (Bot), we say "Intel Iris OpenGL" (Human).
         context.add_init_script("""
+            // 1. Fake the GPU
+            const getParameter = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                // 37445 = UNMASKED_VENDOR_WEBGL
+                if (parameter === 37445) return 'Intel Open Source Technology Center';
+                // 37446 = UNMASKED_RENDERER_WEBGL
+                if (parameter === 37446) return 'Mesa DRI Intel(R) HD Graphics 620 (Kaby Lake GT2)';
+                return getParameter(parameter);
+            };
+
+            // 2. Fake the "Permissions" API (Common headless giveaway)
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                Promise.resolve({ state: Notification.permission }) :
+                originalQuery(parameters)
+            );
+
+            // 3. Remove "WebDriver" flag
             Object.defineProperty(navigator, 'webdriver', {
                 get: () => undefined
             });
@@ -52,36 +70,56 @@ def scrape_logic():
 
         page = context.new_page()
         
+        # --- LISTEN FOR FAILURES (New Debugging) ---
+        # If the specific request is blocked (403), we want to know immediately.
+        def handle_request_failed(request):
+            if "/hezushon/ge/" in request.url:
+                print(f"BLOCKED: {request.url} failed with {request.failure}")
+                debug_info["block_reason"] = str(request.failure)
+
+        page.on("requestfailed", handle_request_failed)
+
         def handle_response(response):
             if "/hezushon/ge/" in response.url:
-                try:
-                    data = response.json()
-                    if data not in results:
-                        results.append(data)
-                except:
-                    pass
+                print(f"STATUS: {response.status} | URL: {response.url}")
+                if response.status == 200:
+                    try:
+                        data = response.json()
+                        if data not in results:
+                            results.append(data)
+                    except:
+                        pass
+                else:
+                    debug_info["http_error"] = response.status
 
         page.on("response", handle_response)
         
         try:
             print("Navigating...")
-            # Use the autoplay url you found (it might help trigger the load)
-            page.goto("https://vidfast.pro/movie/155?autoplay=true", timeout=60000, wait_until="domcontentloaded")
+            page.goto("https://vidfast.pro/movie/533535?autoplay=true", timeout=60000, wait_until="domcontentloaded")
             
-            # Wait loop
-            debug_info["status"] = "Waiting on page..."
+            # --- INTERACTION LOOP ---
+            debug_info["status"] = "Waiting..."
             for i in range(25):
                 if len(results) >= 2:
                     break
                 
-                # Simple mouse wiggle
+                # Wiggle mouse to trigger "User Activity"
                 page.mouse.move(random.randint(100, 800), random.randint(100, 600))
+                
+                # Check if we are still stuck on "Fetching"
+                try:
+                    if i == 5: # Only check once after 5 seconds
+                        if page.is_visible("text=FETCHING"):
+                            print("Loader detected. Attempting to click it...")
+                            page.click("body") # Blind click to focus
+                except:
+                    pass
+                
                 page.wait_for_timeout(1000)
 
             if not results:
                 debug_info["status"] = "Timed out"
-                debug_info["final_url"] = page.url
-                # Capture text to see if we are still blocked
                 try:
                     debug_info["page_text"] = page.inner_text("body")[:300]
                 except:
