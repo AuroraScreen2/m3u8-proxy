@@ -8,14 +8,27 @@ app = FastAPI()
 
 EXTENSION_PATH = os.path.abspath("./vidfast-extension")
 
+# READ PROXY FROM ENVIRONMENT (Settings -> Environment Variables in Render)
+# Format should be: http://user:pass@ip:port
+PROXY_STRING = "http://kobxbjoj:y2x3x7ewuxj1@142.111.48.253:7030" 
+
 def run_scraper_with_extension(video_url):
     print(f"🚀 Launching Browser for: {video_url}")
+    print(f"🌍 Using Proxy: {PROXY_STRING if PROXY_STRING else 'None (Expect Block)'}")
+    
     debug_screenshot = None
     
     with sync_playwright() as p:
+        # CONFIGURE PROXY
+        proxy_config = {"server": PROXY_STRING} if PROXY_STRING else None
+
         context = p.chromium.launch_persistent_context(
             user_data_dir="/tmp/chrome_user_data", 
-            headless=False, # Required for extensions
+            headless=False, 
+            
+            # --- NEW: PROXY SETTINGS ---
+            proxy=proxy_config, 
+            
             args=[
                 f"--disable-extensions-except={EXTENSION_PATH}",
                 f"--load-extension={EXTENSION_PATH}",
@@ -23,67 +36,37 @@ def run_scraper_with_extension(video_url):
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
-                "--autoplay-policy=no-user-gesture-required" # <--- NEW: Force Autoplay
+                "--autoplay-policy=no-user-gesture-required"
             ],
             viewport={"width": 1920, "height": 1080}
         )
 
         page = context.new_page()
 
-        # 1. INJECT ANTI-BOT SCRIPT (To pass "FETCHING" screen)
-        # This deletes the 'webdriver' flag and fakes a GPU
+        # Anti-Bot Script (Still needed even with proxy)
         page.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-            window.navigator.permissions.query = (parameters) => (
-                parameters.name === 'notifications' ?
-                Promise.resolve({ state: Notification.permission }) :
-                originalQuery(parameters)
-            );
         """)
         
         try:
             print("Navigating...")
-            page.goto(video_url, timeout=60000, wait_until="domcontentloaded")
+            # Increased timeout because proxies can be slow
+            page.goto(video_url, timeout=90000, wait_until="domcontentloaded")
             
-            # 2. WAIT & WIGGLE (Bypass "Fetching")
-            print("fighting 'Fetching' screen...")
-            for i in range(5):
-                page.mouse.move(200 + i*50, 200 + i*50)
-                page.mouse.down()
-                page.mouse.up()
-                time.sleep(1)
-
-            # 3. AGGRESSIVE CLICKER (Force Video Play)
-            # VidFast often puts the video in an iframe. We click the center of the screen.
-            print("Attempting to click Play...")
+            # Wiggle & Click Logic
+            print("Interacting with page...")
+            time.sleep(5)
+            page.mouse.click(960, 540) # Click center
             
-            # Click dead center of screen
-            page.mouse.click(960, 540)
-            time.sleep(1)
-            
-            # Try finding iframes and clicking them
-            for frame in page.frames:
-                try:
-                    # Click inside every iframe found
-                    box = frame.frame_element().bounding_box()
-                    if box:
-                        x = box['x'] + box['width'] / 2
-                        y = box['y'] + box['height'] / 2
-                        page.mouse.click(x, y)
-                        print(f"Clicked iframe at {x},{y}")
-                except:
-                    pass
-
-            # 4. WAIT FOR SNIFFER
-            print("⏳ Video should be playing. Waiting 15s for extension...")
+            # Wait for extension
+            print("⏳ Waiting 15s for extension...")
             time.sleep(15)
             
-            # 5. TAKE DEBUG SCREENSHOT
-            # This is crucial. If it fails, we need to see what the bot saw.
+            # Take Screenshot
             screenshot_bytes = page.screenshot(full_page=False)
             debug_screenshot = base64.b64encode(screenshot_bytes).decode("utf-8")
             
-            result = "Finished. Check Screenshot to verify video played."
+            result = "Finished."
 
         except Exception as e:
             print(f"❌ Error: {e}")
@@ -92,30 +75,17 @@ def run_scraper_with_extension(video_url):
         context.close()
         return result, debug_screenshot
 
-@app.get("/trigger-scrape")
-def trigger_scrape(url: str):
-    status, screenshot = run_scraper_with_extension(url)
-    
-    # We return the screenshot in the JSON so you can debug
-    return {
-        "status": "completed", 
-        "message": status,
-        "screenshot_base64": screenshot[:100] + "..." if screenshot else "None" # Truncated for log
-    }
-
-# NEW: Endpoint to view the screenshot directly
 @app.get("/debug-view")
 def debug_view(url: str):
     status, screenshot = run_scraper_with_extension(url)
     if screenshot:
         html_content = f"""
-        <html>
-            <body>
-                <h1>Debug View</h1>
-                <p><b>Status:</b> {status}</p>
-                <img src="data:image/png;base64,{screenshot}" style="max-width:100%; border: 2px solid red;" />
-            </body>
-        </html>
+        <html><body>
+            <h1>Debug View</h1>
+            <p><b>Status:</b> {status}</p>
+            <p><b>Proxy Used:</b> {PROXY_STRING}</p>
+            <img src="data:image/png;base64,{screenshot}" style="max-width:100%; border: 2px solid red;" />
+        </body></html>
         """
         return Response(content=html_content, media_type="text/html")
-    return {"error": "Failed to capture screenshot", "details": status}
+    return {"error": "Failed", "details": status}
