@@ -12,21 +12,29 @@ EXTENSION_PATH = os.path.abspath("./vidfast-extension")
 # Format should be: http://user:pass@ip:port
 PROXY_STRING = "http://kobxbjoj:y2x3x7ewuxj1@142.111.48.253:7030" 
 
+# HARDCODED SETTINGS (Fill these in carefully)
+PROXY_HOST = "142.111.48.253:7030"  # IP:PORT only
+PROXY_USER = "kobxbjoj"
+PROXY_PASS = "y2x3x7ewuxj1"
+
 def run_scraper_with_extension(video_url):
     print(f"🚀 Launching Browser for: {video_url}")
-    print(f"🌍 Using Proxy: {PROXY_STRING if PROXY_STRING else 'None (Expect Block)'}")
     
     debug_screenshot = None
     
     with sync_playwright() as p:
-        # CONFIGURE PROXY
-        proxy_config = {"server": PROXY_STRING} if PROXY_STRING else None
+        # --- THE FIX: Clean Proxy Config ---
+        proxy_config = {
+            "server": f"http://{PROXY_HOST}",
+            "username": PROXY_USER,
+            "password": PROXY_PASS
+        }
 
         context = p.chromium.launch_persistent_context(
             user_data_dir="/tmp/chrome_user_data", 
-            headless=False, 
+            headless=False,
             
-            # --- NEW: PROXY SETTINGS ---
+            # Use the clean config
             proxy=proxy_config, 
             
             args=[
